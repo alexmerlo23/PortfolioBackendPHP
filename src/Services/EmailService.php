@@ -232,4 +232,17 @@ class EmailService
                 return [];
         }
     }
+
+    public function isConfigured(): bool
+    {
+        $requiredKeys = $this->getRequiredConfigKeys();
+        
+        foreach ($requiredKeys as $key) {
+            if (empty($this->config[$key])) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
 }
