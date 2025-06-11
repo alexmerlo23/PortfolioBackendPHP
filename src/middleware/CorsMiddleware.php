@@ -20,9 +20,15 @@ class CorsMiddleware implements MiddlewareInterface
         if ($_ENV['APP_ENV'] === 'development') {
             $this->allowedOrigins = array_merge($this->allowedOrigins, [
                 'http://localhost:3000',
-                'http://localhost:5173',
-                'https://delightful-grass-046395110.6.azurestaticapps.net'
+                'http://localhost:5173'
             ]);
+        }
+        
+        // Always allow your Azure Static Web App in production if ALLOWED_ORIGINS is empty
+        if (empty($this->allowedOrigins)) {
+            $this->allowedOrigins = [
+                'https://delightful-grass-046395110.6.azurestaticapps.net'
+            ];
         }
     }
 
@@ -42,15 +48,17 @@ class CorsMiddleware implements MiddlewareInterface
         } else {
             // Log unauthorized origin attempt
             error_log(sprintf(
-                '[%s] [CORS] Blocked request from unauthorized origin: %s',
+                '[%s] [CORS] Blocked request from unauthorized origin: %s (Allowed: %s)',
                 date('c'),
-                $origin
+                $origin,
+                implode(', ', $this->allowedOrigins)
             ));
             
             http_response_code(403);
             return [
                 'error' => 'CORS: Origin not allowed',
-                'origin' => $origin
+                'origin' => $origin,
+                'allowed_origins' => $this->allowedOrigins
             ];
         }
 
