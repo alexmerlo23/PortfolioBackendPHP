@@ -40,7 +40,7 @@ class ContactController
             $dbData = [
                 'name' => trim($contactData['name']),
                 'email' => trim(strtolower($contactData['email'])),
-                'subject' => trim($contactData['subject']),
+                'subject' => trim($contactData['subject'] ?? ''),
                 'message' => trim($contactData['message']),
                 'ip_address' => $request['ip'],
                 'user_agent' => $request['user_agent']
@@ -51,35 +51,41 @@ class ContactController
 
             // Send email notification
             $emailSent = false;
-            try {
-                $emailSent = $this->emailService->sendContactEmail($dbData);
-            } catch (Exception $e) {
-                error_log(sprintf(
-                    '[%s] [CONTACT] Email sending failed for contact ID %d: %s',
-                    date('c'),
-                    $contactId,
-                    $e->getMessage()
-                ));
+            $emailConfigured = $this->emailService->isConfigured();
+            
+            if ($emailConfigured) {
+                try {
+                    $emailSent = $this->emailService->sendContactEmail($dbData);
+                } catch (Exception $e) {
+                    error_log(sprintf(
+                        '[%s] [CONTACT] Email sending failed for contact ID %d: %s',
+                        date('c'),
+                        $contactId,
+                        $e->getMessage()
+                    ));
+                }
             }
 
-            // Log the contact
+            // Log the contact with detailed information
             error_log(sprintf(
-                '[%s] [CONTACT] New contact message from %s (%s) - ID: %d, Email sent: %s',
+                '[%s] [CONTACT] New contact message from %s (%s) - ID: %d, Email sent: %s, Email configured: %s',
                 date('c'),
                 $dbData['name'],
                 $dbData['email'],
                 $contactId,
-                $emailSent ? 'Yes' : 'No'
+                $emailSent ? 'Yes' : 'No',
+                $emailConfigured ? 'Yes' : 'No'
             ));
 
             http_response_code(201);
             return [
                 'success' => true,
-                'message' => 'Message sent successfully',
+                'message' => 'Contact message sent successfully',
                 'data' => [
                     'id' => $contactId,
-                    'email_sent' => $emailSent,
-                    'timestamp' => date('c')
+                    'timestamp' => date('c'),
+                    'emailSent' => $emailSent,
+                    'emailConfigured' => $emailConfigured
                 ]
             ];
 
@@ -115,12 +121,12 @@ class ContactController
 
             return [
                 'success' => true,
-                'data' => $messages,
+                'messages' => $messages, // Changed from 'data' to 'messages' to match Node.js version
                 'pagination' => [
-                    'current_page' => $page,
-                    'per_page' => $limit,
+                    'page' => $page, // Changed from 'current_page' to match Node.js
+                    'limit' => $limit, // Changed from 'per_page' to match Node.js
                     'total' => $total,
-                    'total_pages' => $totalPages,
+                    'pages' => $totalPages, // Changed from 'total_pages' to match Node.js
                     'has_next' => $page < $totalPages,
                     'has_prev' => $page > 1
                 ]
@@ -137,7 +143,7 @@ class ContactController
             return [
                 'success' => false,
                 'message' => 'Failed to retrieve messages',
-                'error' => $_ENV['APP_ENV'] === 'development' ? $e->getMessage() : 'Internal server error'
+                'error' => $_ENV['APP_ENV'] === 'development' ? $e->getMessage() : 'Failed to retrieve messages'
             ];
         }
     }
@@ -149,7 +155,7 @@ class ContactController
 
             return [
                 'success' => true,
-                'data' => $stats,
+                'stats' => $stats, // Changed from 'data' to 'stats' to match Node.js version
                 'timestamp' => date('c')
             ];
 
@@ -164,6 +170,42 @@ class ContactController
             return [
                 'success' => false,
                 'message' => 'Failed to retrieve statistics',
+                'error' => $_ENV['APP_ENV'] === 'development' ? $e->getMessage() : 'Failed to retrieve statistics'
+            ];
+        }
+    }
+
+    public function getMessage(string $id): array
+    {
+        try {
+            $message = $this->contactModel->findById((int)$id);
+            
+            if (!$message) {
+                http_response_code(404);
+                return [
+                    'success' => false,
+                    'message' => 'Contact message not found'
+                ];
+            }
+
+            return [
+                'success' => true,
+                'data' => $message,
+                'timestamp' => date('c')
+            ];
+
+        } catch (Exception $e) {
+            error_log(sprintf(
+                '[%s] [CONTACT] Error retrieving message ID %s: %s',
+                date('c'),
+                $id,
+                $e->getMessage()
+            ));
+
+            http_response_code(500);
+            return [
+                'success' => false,
+                'message' => 'Failed to retrieve message',
                 'error' => $_ENV['APP_ENV'] === 'development' ? $e->getMessage() : 'Internal server error'
             ];
         }
@@ -203,4 +245,40 @@ class ContactController
         }
     }
 
-    public function getMessage(string $id): array
+    /**
+     * Helper method to get request data
+     * This should be implemented based on your framework/routing setup
+     */
+    private function getRequestData(): array
+    {
+        $body = [];
+        $query = $_GET;
+        
+        // Get request body
+        $input = file_get_contents('php://input');
+        if ($input) {
+            $body = json_decode($input, true) ?? [];
+        }
+        
+        // Merge with $_POST if available
+        if (!empty($_POST)) {
+            $body = array_merge($body, $_POST);
+        }
+        
+        // Get client IP
+        $ip = $_SERVER['HTTP_X_FORWARDED_FOR'] ?? 
+              $_SERVER['HTTP_X_REAL_IP'] ?? 
+              $_SERVER['REMOTE_ADDR'] ?? 
+              'unknown';
+        
+        // Get user agent
+        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'unknown';
+        
+        return [
+            'body' => $body,
+            'query' => $query,
+            'ip' => $ip,
+            'user_agent' => $userAgent
+        ];
+    }
+}
