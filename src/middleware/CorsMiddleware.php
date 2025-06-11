@@ -21,7 +21,7 @@ class CorsMiddleware implements MiddlewareInterface
             $this->allowedOrigins = array_merge($this->allowedOrigins, [
                 'http://localhost:3000',
                 'http://localhost:5173',
-                'http://localhost:8000'
+                'https://delightful-grass-046395110.6.azurestaticapps.net/'
             ]);
         }
     }
