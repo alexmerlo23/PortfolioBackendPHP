@@ -194,25 +194,29 @@ class DatabaseConnection {
 }
 
 // =============================================================================
-// EMAIL SERVICE
+// EMAIL SERVICE - SIMPLIFIED (SMTP REMOVED)
 // =============================================================================
 class EmailService {
     private string $provider;
     private array $config;
 
     public function __construct() {
-        $this->provider = $_ENV['EMAIL_PROVIDER'] ?? getenv('EMAIL_PROVIDER') ?? 'emailjs';
+        $this->provider = $_ENV['EMAIL_PROVIDER'] ?? getenv('EMAIL_PROVIDER') ?? 'disabled';
         $this->config = $this->getConfig();
     }
 
     public function sendContactEmail(array $contactData): bool {
+        if ($this->provider === 'disabled') {
+            error_log("[EMAIL] Email provider is disabled");
+            return false;
+        }
+
         switch ($this->provider) {
             case 'emailjs':
                 return $this->sendViaEmailJS($contactData);
-            case 'smtp':
-                return $this->sendViaSMTP($contactData);
             default:
-                throw new Exception("Unsupported email provider: {$this->provider}");
+                error_log("[EMAIL] Unsupported email provider: {$this->provider}");
+                return false;
         }
     }
 
@@ -225,11 +229,10 @@ class EmailService {
             'user_id' => $this->config['public_key'],
             'accessToken' => $this->config['private_key'],
             'template_params' => [
-                // Match Node.js template parameter names exactly
                 'user_name' => $contactData['name'],
                 'user_email' => $contactData['email'],
                 'message' => $contactData['message'],
-                'to_email' => 'alexmerlo23@gmail.com', // Same hardcoded email as Node.js
+                'to_email' => 'alexmerlo23@gmail.com',
                 'reply_to' => $contactData['email'],
                 'subject' => "New Contact Form Message from {$contactData['name']}"
             ]
@@ -268,64 +271,24 @@ class EmailService {
         return false;
     }
 
-    private function sendViaSMTP(array $contactData): bool {
-        $to = $this->config['to_email'];
-        $subject = "Portfolio Contact: " . ($contactData['subject'] ?? 'New Message');
-        
-        $message = "New contact form submission:\n\n";
-        $message .= "Name: " . $contactData['name'] . "\n";
-        $message .= "Email: " . $contactData['email'] . "\n";
-        $message .= "Subject: " . ($contactData['subject'] ?? 'N/A') . "\n\n";
-        $message .= "Message:\n" . $contactData['message'] . "\n\n";
-        $message .= "---\n";
-        $message .= "Sent from Portfolio Contact Form\n";
-        $message .= "IP: " . ($contactData['ip_address'] ?? 'Unknown') . "\n";
-        $message .= "Time: " . date('c') . "\n";
-
-        $headers = [
-            "From: " . $this->config['from_email'],
-            "Reply-To: " . $contactData['email'],
-            "X-Mailer: Portfolio-Backend-PHP/1.0",
-            "Content-Type: text/plain; charset=UTF-8"
-        ];
-
-        $success = mail($to, $subject, $message, implode("\r\n", $headers));
-        
-        if ($success) {
-            error_log("[EMAIL] Successfully sent email via SMTP for: {$contactData['email']}");
-        } else {
-            error_log("[EMAIL] SMTP mail() function failed for: {$contactData['email']}");
-        }
-
-        return $success;
-    }
-
     private function getConfig(): array {
-        switch ($this->provider) {
-            case 'emailjs':
-                return [
-                    'service_id' => $_ENV['EMAILJS_SERVICE_ID'] ?? getenv('EMAILJS_SERVICE_ID') ?? '',
-                    'template_id' => $_ENV['EMAILJS_TEMPLATE_ID'] ?? getenv('EMAILJS_TEMPLATE_ID') ?? '',
-                    'public_key' => $_ENV['EMAILJS_PUBLIC_KEY'] ?? getenv('EMAILJS_PUBLIC_KEY') ?? '',
-                    'private_key' => $_ENV['EMAILJS_PRIVATE_KEY'] ?? getenv('EMAILJS_PRIVATE_KEY') ?? ''
-                ];
-            
-            case 'smtp':
-                return [
-                    'host' => $_ENV['SMTP_HOST'] ?? getenv('SMTP_HOST') ?? '',
-                    'port' => $_ENV['SMTP_PORT'] ?? getenv('SMTP_PORT') ?? '587',
-                    'username' => $_ENV['SMTP_USERNAME'] ?? getenv('SMTP_USERNAME') ?? '',
-                    'password' => $_ENV['SMTP_PASSWORD'] ?? getenv('SMTP_PASSWORD') ?? '',
-                    'from_email' => $_ENV['SMTP_FROM_EMAIL'] ?? getenv('SMTP_FROM_EMAIL') ?? '',
-                    'to_email' => $_ENV['SMTP_TO_EMAIL'] ?? getenv('SMTP_TO_EMAIL') ?? ''
-                ];
-            
-            default:
-                return [];
+        if ($this->provider === 'emailjs') {
+            return [
+                'service_id' => $_ENV['EMAILJS_SERVICE_ID'] ?? getenv('EMAILJS_SERVICE_ID') ?? '',
+                'template_id' => $_ENV['EMAILJS_TEMPLATE_ID'] ?? getenv('EMAILJS_TEMPLATE_ID') ?? '',
+                'public_key' => $_ENV['EMAILJS_PUBLIC_KEY'] ?? getenv('EMAILJS_PUBLIC_KEY') ?? '',
+                'private_key' => $_ENV['EMAILJS_PRIVATE_KEY'] ?? getenv('EMAILJS_PRIVATE_KEY') ?? ''
+            ];
         }
+        
+        return [];
     }
 
     public function isConfigured(): bool {
+        if ($this->provider === 'disabled') {
+            return false;
+        }
+
         $requiredKeys = $this->getRequiredConfigKeys();
         
         foreach ($requiredKeys as $key) {
@@ -338,21 +301,16 @@ class EmailService {
     }
 
     private function getRequiredConfigKeys(): array {
-        switch ($this->provider) {
-            case 'emailjs':
-                return ['service_id', 'template_id', 'public_key', 'private_key'];
-            
-            case 'smtp':
-                return ['host', 'port', 'username', 'password', 'from_email', 'to_email'];
-            
-            default:
-                return [];
+        if ($this->provider === 'emailjs') {
+            return ['service_id', 'template_id', 'public_key', 'private_key'];
         }
+        
+        return [];
     }
 }
 
 // =============================================================================
-// CONTACT FORM HANDLER
+// CONTACT FORM HANDLER - UPDATED FOR YOUR SCHEMA
 // =============================================================================
 class ContactFormHandler {
     private DatabaseConnection $db;
@@ -361,7 +319,7 @@ class ContactFormHandler {
     public function __construct() {
         $this->db = DatabaseConnection::getInstance();
         $this->emailService = new EmailService();
-        $this->createTableIfNotExists();
+        // Removed createTableIfNotExists since you have your own schema
     }
 
     public function handleRequest(): array {
@@ -384,14 +342,11 @@ class ContactFormHandler {
                 ];
             }
 
-            // Prepare contact data
+            // Prepare contact data - MATCH YOUR SCHEMA
             $contactData = [
                 'name' => trim($input['name']),
                 'email' => trim($input['email']),
-                'subject' => trim($input['subject'] ?? 'Contact Form Message'),
                 'message' => trim($input['message']),
-                'ip_address' => $this->getClientIP(),
-                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
                 'created_at' => date('Y-m-d H:i:s')
             ];
 
@@ -399,21 +354,30 @@ class ContactFormHandler {
             $contactId = null;
             if ($this->db->isConfigured()) {
                 $contactId = $this->saveToDatabase($contactData);
+                error_log("[DB] Attempted to save contact message. Result ID: " . ($contactId ? $contactId : 'FAILED'));
+            } else {
+                error_log("[DB] Database not configured - skipping database save");
             }
 
-            // Send email if configured
+            // TEMPORARILY DISABLE EMAIL - Check environment variable
             $emailSent = false;
-            if ($this->emailService->isConfigured()) {
+            $emailProvider = $_ENV['EMAIL_PROVIDER'] ?? getenv('EMAIL_PROVIDER') ?? 'disabled';
+            
+            if ($emailProvider !== 'disabled' && $this->emailService->isConfigured()) {
                 $emailSent = $this->emailService->sendContactEmail($contactData);
+                error_log("[EMAIL] Email provider is: {$emailProvider}, Email sent: " . ($emailSent ? 'Yes' : 'No'));
+            } else {
+                error_log("[EMAIL] Email disabled or not configured. Provider: {$emailProvider}");
             }
 
-            // Log the submission
+            // Log the submission with more detail
             error_log(sprintf(
-                "[CONTACT] New message from %s (%s) - DB ID: %s, Email sent: %s",
+                "[CONTACT] New message from %s (%s) - DB ID: %s, Email sent: %s, DB configured: %s",
                 $contactData['name'],
                 $contactData['email'],
-                $contactId ? $contactId : 'N/A',
-                $emailSent ? 'Yes' : 'No'
+                $contactId ? $contactId : 'FAILED',
+                $emailSent ? 'Yes' : 'No',
+                $this->db->isConfigured() ? 'Yes' : 'No'
             ));
 
             http_response_code(201);
@@ -422,11 +386,13 @@ class ContactFormHandler {
                 'message' => 'Contact message received successfully',
                 'id' => $contactId,
                 'email_sent' => $emailSent,
+                'database_saved' => $contactId !== null,
                 'timestamp' => $contactData['created_at']
             ];
 
         } catch (Exception $e) {
             error_log("[CONTACT] Error: " . $e->getMessage());
+            error_log("[CONTACT] Stack trace: " . $e->getTraceAsString());
             
             http_response_code(500);
             return [
@@ -455,7 +421,7 @@ class ContactFormHandler {
             $errors[] = 'Message is required';
         }
 
-        // Length validations
+        // Length validations - MATCH YOUR SCHEMA
         if (!empty($input['name']) && strlen(trim($input['name'])) < 2) {
             $errors[] = 'Name must be at least 2 characters long';
         }
@@ -464,21 +430,15 @@ class ContactFormHandler {
             $errors[] = 'Message must be at least 2 characters long';
         }
 
-        if (!empty($input['name']) && strlen($input['name']) > 255) {
-            $errors[] = 'Name must be less than 255 characters';
+        if (!empty($input['name']) && strlen($input['name']) > 100) {
+            $errors[] = 'Name must be less than 100 characters'; // Your schema limit
         }
 
         if (!empty($input['email']) && strlen($input['email']) > 255) {
             $errors[] = 'Email must be less than 255 characters';
         }
 
-        if (!empty($input['subject']) && strlen($input['subject']) > 500) {
-            $errors[] = 'Subject must be less than 500 characters';
-        }
-
-        if (!empty($input['message']) && strlen($input['message']) > 5000) {
-            $errors[] = 'Message must be less than 5000 characters';
-        }
+        // No length limit for message since you're using NVARCHAR(MAX)
 
         return $errors;
     }
@@ -487,58 +447,57 @@ class ContactFormHandler {
         try {
             $pdo = $this->db->getConnection();
             
+            // Test connection first
+            $testStmt = $pdo->query("SELECT 1");
+            error_log("[DB] Connection test successful");
+            
+            // Check if table exists
+            $tableCheck = $pdo->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ContactMessages'");
+            $tableCheck->execute();
+            $tableExists = $tableCheck->fetchColumn() > 0;
+            error_log("[DB] ContactMessages table exists: " . ($tableExists ? 'Yes' : 'No'));
+            
+            if (!$tableExists) {
+                throw new Exception("ContactMessages table does not exist");
+            }
+            
+            // MATCH YOUR EXACT SCHEMA - Only Name, Email, Message
             $stmt = $pdo->prepare("
-                INSERT INTO ContactMessages (Name, Email, Subject, Message, IpAddress, UserAgent, CreatedAt) 
+                INSERT INTO ContactMessages (Name, Email, Message) 
                 OUTPUT INSERTED.ID
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?)
             ");
+            
+            error_log("[DB] Executing insert with values: " . json_encode([
+                'name' => $contactData['name'],
+                'email' => $contactData['email'],
+                'message_length' => strlen($contactData['message'])
+            ]));
             
             $stmt->execute([
                 $contactData['name'],
                 $contactData['email'],
-                $contactData['subject'],
-                $contactData['message'],
-                $contactData['ip_address'],
-                $contactData['user_agent'],
-                $contactData['created_at']
+                $contactData['message']
             ]);
             
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
-            return $result ? (int)$result['ID'] : null;
+            $insertedId = $result ? (int)$result['ID'] : null;
+            
+            error_log("[DB] Insert result: " . ($insertedId ? "Success, ID: {$insertedId}" : "Failed - no ID returned"));
+            
+            return $insertedId;
 
         } catch (Exception $e) {
             error_log("[DB] Failed to save contact message: " . $e->getMessage());
+            error_log("[DB] Error details: " . $e->getTraceAsString());
+            
+            // Try to get more specific error information
+            if (isset($pdo)) {
+                $errorInfo = $pdo->errorInfo();
+                error_log("[DB] PDO Error Info: " . json_encode($errorInfo));
+            }
+            
             return null;
-        }
-    }
-
-    private function createTableIfNotExists(): void {
-        if (!$this->db->isConfigured()) {
-            return;
-        }
-
-        try {
-            $pdo = $this->db->getConnection();
-            
-            $sql = "
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ContactMessages' AND xtype='U')
-            CREATE TABLE ContactMessages (
-                ID int IDENTITY(1,1) PRIMARY KEY,
-                Name nvarchar(255) NOT NULL,
-                Email nvarchar(255) NOT NULL,
-                Subject nvarchar(500) NULL,
-                Message ntext NOT NULL,
-                IpAddress nvarchar(45) NULL,
-                UserAgent nvarchar(500) NULL,
-                CreatedAt datetime2 NOT NULL DEFAULT GETDATE(),
-                INDEX idx_created_at (CreatedAt),
-                INDEX idx_email (Email)
-            )";
-
-            $pdo->exec($sql);
-            
-        } catch (Exception $e) {
-            error_log("[DB] Failed to create ContactMessages table: " . $e->getMessage());
         }
     }
 
