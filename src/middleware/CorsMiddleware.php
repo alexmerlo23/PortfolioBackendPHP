@@ -27,7 +27,7 @@ class CorsMiddleware implements MiddlewareInterface
         // Always allow your Azure Static Web App in production if ALLOWED_ORIGINS is empty
         if (empty($this->allowedOrigins)) {
             $this->allowedOrigins = [
-                'https://delightful-grass-046395110.6.azurestaticapps.net'
+                'https://polite-sea-0cee84310.6.azurestaticapps.net/'
             ];
         }
     }
