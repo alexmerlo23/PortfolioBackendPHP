@@ -276,9 +276,12 @@ class DatabaseConnection {
     public function testConnection(): bool {
         try {
             $pdo = $this->getConnection();
-            $stmt = $pdo->query("SELECT GETDATE() as current_time");
+            
+            // Fix: Use proper column alias with square brackets for SQL Server
+            $stmt = $pdo->query("SELECT GETDATE() AS [server_time]");
             $result = $stmt->fetch();
-            error_log("[DB] Connection test successful. Server time: " . $result['current_time']);
+            
+            error_log("[DB] Connection test successful. Server time: " . $result['server_time']);
             return true;
         } catch (Exception $e) {
             error_log("[DB] Connection test failed: " . $e->getMessage());
