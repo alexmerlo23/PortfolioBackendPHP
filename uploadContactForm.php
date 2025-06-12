@@ -158,7 +158,7 @@ class DatabaseConnection {
         return $this->connection;
     }
 
-private function connect(): void {
+    private function connect(): void {
     try {
         // Multiple DSN formats to try for Azure SQL with LONGER TIMEOUTS
         $dsnOptions = [
