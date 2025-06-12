@@ -47,6 +47,10 @@ try {
         $debug['env_loaded'] = true;
     }
     
+    // Fallback to getenv for Azure App Service environment variables
+    $appEnv = $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production';
+    $debug['app_env'] = $appEnv;
+    
     $debug['step'] = 'checking_classes';
     
     // Check if our classes exist
@@ -54,23 +58,33 @@ try {
         'Application' => class_exists('App\Core\Application'),
         'Router' => class_exists('App\Core\Router'),
         'CorsMiddleware' => class_exists('App\Middleware\CorsMiddleware'),
+        'ContactController' => class_exists('App\Controllers\ContactController'),
     ];
     
     $debug['step'] = 'creating_router';
     
-    // Try to create router
+    // Create router
     $router = new App\Core\Router();
     
     $debug['step'] = 'loading_routes';
     
-    // Check if routes file exists
+    // Load routes from Contact.php
     $routesPath = __DIR__ . '/../src/routes/Contact.php';
     $debug['routes_path'] = $routesPath;
     $debug['routes_exists'] = file_exists($routesPath);
     
     if (file_exists($routesPath)) {
-        require_once $routesPath;
+        $routeConfig = require_once $routesPath;
         $debug['routes_loaded'] = true;
+        if (is_callable($routeConfig)) {
+            $routeConfig($router);
+            $debug['routes_configured'] = true;
+        } else {
+            $debug['routes_configured'] = false;
+            error_log('Contact.php did not return a callable');
+        }
+    } else {
+        error_log('Routes file not found: ' . $routesPath);
     }
     
     $debug['step'] = 'adding_root_route';
@@ -100,13 +114,18 @@ try {
     
     $debug['step'] = 'adding_middleware';
     
-    // Try to add middleware if it exists
+    // Add middleware if it exists
     if (class_exists('App\Middleware\CorsMiddleware')) {
         $app->addMiddleware(new App\Middleware\CorsMiddleware());
         $debug['cors_middleware_added'] = true;
     }
     
     $debug['step'] = 'running_application';
+    
+    // Log registered routes for debugging
+    if ($appEnv !== 'production') {
+        error_log('[DEBUG] Registered routes: ' . json_encode($router->getRoutes()));
+    }
     
     // Run application
     $app->run();
