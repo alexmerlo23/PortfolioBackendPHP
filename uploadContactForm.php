@@ -591,6 +591,7 @@ try {
         ];
     }
     
+    
     echo json_encode($response, JSON_PRETTY_PRINT);
     
     error_log("[ERROR] " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
