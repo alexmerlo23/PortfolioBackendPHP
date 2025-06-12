@@ -124,7 +124,7 @@ class CorsHandler {
 }
 
 // =============================================================================
-// DATABASE CONFIGURATION
+// DATABASE CONFIGURATION - FIXED FOR AZURE SQL
 // =============================================================================
 class DatabaseConnection {
     private static ?DatabaseConnection $instance = null;
@@ -139,6 +139,9 @@ class DatabaseConnection {
             'username' => $_ENV['DB_USERNAME'] ?? getenv('DB_USERNAME'),
             'password' => $_ENV['DB_PASSWORD'] ?? getenv('DB_PASSWORD'),
         ];
+        
+        // Log configuration (without sensitive data)
+        error_log("[DB] Config - Host: {$this->config['host']}, Port: {$this->config['port']}, Database: {$this->config['database']}, Username: {$this->config['username']}");
     }
 
     public static function getInstance(): DatabaseConnection {
@@ -157,39 +160,118 @@ class DatabaseConnection {
 
     private function connect(): void {
         try {
-            $dsn = sprintf(
-                'sqlsrv:Server=%s,%s;Database=%s;TrustServerCertificate=1;ConnectionPooling=0',
-                $this->config['host'],
-                $this->config['port'],
-                $this->config['database']
-            );
+            // Multiple DSN formats to try for Azure SQL
+            $dsnOptions = [
+                // Option 1: Full Azure SQL format
+                sprintf(
+                    'sqlsrv:server=%s,%s;Database=%s;LoginTimeout=30;Encrypt=1;TrustServerCertificate=0',
+                    $this->config['host'],
+                    $this->config['port'],
+                    $this->config['database']
+                ),
+                // Option 2: Alternative format
+                sprintf(
+                    'sqlsrv:Server=%s;Database=%s;LoginTimeout=30;Encrypt=true;TrustServerCertificate=false',
+                    $this->config['host'],
+                    $this->config['database']
+                ),
+                // Option 3: Simplified format
+                sprintf(
+                    'sqlsrv:server=%s;Database=%s;Encrypt=yes',
+                    $this->config['host'],
+                    $this->config['database']
+                )
+            ];
 
             $options = [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES => false,
                 PDO::ATTR_TIMEOUT => 30,
+                PDO::SQLSRV_ATTR_ENCODING => PDO::SQLSRV_ENCODING_UTF8,
             ];
 
-            $this->connection = new PDO(
-                $dsn,
-                $this->config['username'],
-                $this->config['password'],
-                $options
-            );
+            $lastException = null;
+            $connected = false;
 
-            error_log("[DB] Connected to Azure SQL Database: {$this->config['database']}");
+            // Try each DSN format
+            foreach ($dsnOptions as $index => $dsn) {
+                try {
+                    error_log("[DB] Attempting connection #{$index} with DSN: {$dsn}");
+                    
+                    $this->connection = new PDO(
+                        $dsn,
+                        $this->config['username'],
+                        $this->config['password'],
+                        $options
+                    );
+                    
+                    // Test the connection
+                    $this->connection->query("SELECT 1");
+                    
+                    error_log("[DB] Successfully connected to Azure SQL Database with DSN #{$index}");
+                    $connected = true;
+                    break;
+                    
+                } catch (PDOException $e) {
+                    error_log("[DB] Connection attempt #{$index} failed: " . $e->getMessage());
+                    $lastException = $e;
+                    $this->connection = null;
+                    continue;
+                }
+            }
+
+            if (!$connected) {
+                throw $lastException ?? new Exception('All connection attempts failed');
+            }
 
         } catch (PDOException $e) {
-            error_log("[DB] Connection failed: " . $e->getMessage());
+            error_log("[DB] Final connection failure: " . $e->getMessage());
+            error_log("[DB] Error code: " . $e->getCode());
+            
+            // Provide more specific error guidance
+            $errorMessage = $e->getMessage();
+            if (strpos($errorMessage, 'Login timeout') !== false) {
+                error_log("[DB] LOGIN TIMEOUT - Check firewall rules and network connectivity");
+            } elseif (strpos($errorMessage, 'Login failed') !== false) {
+                error_log("[DB] LOGIN FAILED - Check username/password");
+            } elseif (strpos($errorMessage, 'Cannot open database') !== false) {
+                error_log("[DB] DATABASE ACCESS - Check database name and permissions");
+            }
+            
             throw new Exception('Database connection failed: ' . $e->getMessage());
         }
     }
 
     public function isConfigured(): bool {
-        return !empty($this->config['host']) && 
-               !empty($this->config['database']) && 
-               !empty($this->config['username']);
+        $configured = !empty($this->config['host']) && 
+                     !empty($this->config['database']) && 
+                     !empty($this->config['username']) &&
+                     !empty($this->config['password']);
+        
+        error_log("[DB] Configuration check: " . ($configured ? 'CONFIGURED' : 'NOT CONFIGURED'));
+        
+        if (!$configured) {
+            error_log("[DB] Missing config - Host: " . (empty($this->config['host']) ? 'MISSING' : 'OK') .
+                     ", Database: " . (empty($this->config['database']) ? 'MISSING' : 'OK') .
+                     ", Username: " . (empty($this->config['username']) ? 'MISSING' : 'OK') .
+                     ", Password: " . (empty($this->config['password']) ? 'MISSING' : 'OK'));
+        }
+        
+        return $configured;
+    }
+
+    public function testConnection(): bool {
+        try {
+            $pdo = $this->getConnection();
+            $stmt = $pdo->query("SELECT GETDATE() as current_time");
+            $result = $stmt->fetch();
+            error_log("[DB] Connection test successful. Server time: " . $result['current_time']);
+            return true;
+        } catch (Exception $e) {
+            error_log("[DB] Connection test failed: " . $e->getMessage());
+            return false;
+        }
     }
 }
 
@@ -310,7 +392,7 @@ class EmailService {
 }
 
 // =============================================================================
-// CONTACT FORM HANDLER - UPDATED FOR YOUR SCHEMA
+// CONTACT FORM HANDLER - IMPROVED ERROR HANDLING
 // =============================================================================
 class ContactFormHandler {
     private DatabaseConnection $db;
@@ -319,7 +401,6 @@ class ContactFormHandler {
     public function __construct() {
         $this->db = DatabaseConnection::getInstance();
         $this->emailService = new EmailService();
-        // Removed createTableIfNotExists since you have your own schema
     }
 
     public function handleRequest(): array {
@@ -342,7 +423,7 @@ class ContactFormHandler {
                 ];
             }
 
-            // Prepare contact data - MATCH YOUR SCHEMA
+            // Prepare contact data
             $contactData = [
                 'name' => trim($input['name']),
                 'email' => trim($input['email']),
@@ -350,34 +431,42 @@ class ContactFormHandler {
                 'created_at' => date('Y-m-d H:i:s')
             ];
 
-            // Save to database if configured
+            // Test database configuration and connection first
+            $dbConfigured = $this->db->isConfigured();
+            $dbConnected = false;
             $contactId = null;
-            if ($this->db->isConfigured()) {
-                $contactId = $this->saveToDatabase($contactData);
-                error_log("[DB] Attempted to save contact message. Result ID: " . ($contactId ? $contactId : 'FAILED'));
+
+            if ($dbConfigured) {
+                error_log("[DB] Database is configured, testing connection...");
+                $dbConnected = $this->db->testConnection();
+                
+                if ($dbConnected) {
+                    error_log("[DB] Connection test passed, attempting to save...");
+                    $contactId = $this->saveToDatabase($contactData);
+                } else {
+                    error_log("[DB] Connection test failed, skipping database save");
+                }
             } else {
-                error_log("[DB] Database not configured - skipping database save");
+                error_log("[DB] Database not configured, skipping database save");
             }
 
-            // TEMPORARILY DISABLE EMAIL - Check environment variable
+            // Handle email (currently disabled)
             $emailSent = false;
             $emailProvider = $_ENV['EMAIL_PROVIDER'] ?? getenv('EMAIL_PROVIDER') ?? 'disabled';
             
             if ($emailProvider !== 'disabled' && $this->emailService->isConfigured()) {
                 $emailSent = $this->emailService->sendContactEmail($contactData);
-                error_log("[EMAIL] Email provider is: {$emailProvider}, Email sent: " . ($emailSent ? 'Yes' : 'No'));
-            } else {
-                error_log("[EMAIL] Email disabled or not configured. Provider: {$emailProvider}");
             }
 
-            // Log the submission with more detail
+            // Log comprehensive results
             error_log(sprintf(
-                "[CONTACT] New message from %s (%s) - DB ID: %s, Email sent: %s, DB configured: %s",
+                "[CONTACT] Message from %s (%s) - DB Configured: %s, DB Connected: %s, DB ID: %s, Email: %s",
                 $contactData['name'],
                 $contactData['email'],
+                $dbConfigured ? 'Yes' : 'No',
+                $dbConnected ? 'Yes' : 'No',
                 $contactId ? $contactId : 'FAILED',
-                $emailSent ? 'Yes' : 'No',
-                $this->db->isConfigured() ? 'Yes' : 'No'
+                $emailSent ? 'Sent' : 'Disabled/Failed'
             ));
 
             http_response_code(201);
@@ -386,12 +475,14 @@ class ContactFormHandler {
                 'message' => 'Contact message received successfully',
                 'id' => $contactId,
                 'email_sent' => $emailSent,
+                'database_configured' => $dbConfigured,
+                'database_connected' => $dbConnected,
                 'database_saved' => $contactId !== null,
                 'timestamp' => $contactData['created_at']
             ];
 
         } catch (Exception $e) {
-            error_log("[CONTACT] Error: " . $e->getMessage());
+            error_log("[CONTACT] Unexpected error: " . $e->getMessage());
             error_log("[CONTACT] Stack trace: " . $e->getTraceAsString());
             
             http_response_code(500);
@@ -421,7 +512,7 @@ class ContactFormHandler {
             $errors[] = 'Message is required';
         }
 
-        // Length validations - MATCH YOUR SCHEMA
+        // Length validations
         if (!empty($input['name']) && strlen(trim($input['name'])) < 2) {
             $errors[] = 'Name must be at least 2 characters long';
         }
@@ -431,14 +522,12 @@ class ContactFormHandler {
         }
 
         if (!empty($input['name']) && strlen($input['name']) > 100) {
-            $errors[] = 'Name must be less than 100 characters'; // Your schema limit
+            $errors[] = 'Name must be less than 100 characters';
         }
 
         if (!empty($input['email']) && strlen($input['email']) > 255) {
             $errors[] = 'Email must be less than 255 characters';
         }
-
-        // No length limit for message since you're using NVARCHAR(MAX)
 
         return $errors;
     }
@@ -447,76 +536,76 @@ class ContactFormHandler {
         try {
             $pdo = $this->db->getConnection();
             
-            // Test connection first
-            $testStmt = $pdo->query("SELECT 1");
-            error_log("[DB] Connection test successful");
-            
             // Check if table exists
-            $tableCheck = $pdo->prepare("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'ContactMessages'");
+            error_log("[DB] Checking if ContactMessages table exists...");
+            $tableCheck = $pdo->prepare("
+                SELECT COUNT(*) as table_count 
+                FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_NAME = 'ContactMessages' AND TABLE_SCHEMA = 'dbo'
+            ");
             $tableCheck->execute();
             $tableExists = $tableCheck->fetchColumn() > 0;
+            
             error_log("[DB] ContactMessages table exists: " . ($tableExists ? 'Yes' : 'No'));
             
             if (!$tableExists) {
-                throw new Exception("ContactMessages table does not exist");
+                error_log("[DB] ERROR: ContactMessages table does not exist in the database!");
+                return null;
             }
             
-            // MATCH YOUR EXACT SCHEMA - Only Name, Email, Message
+            // Prepare and execute insert
+            error_log("[DB] Preparing insert statement...");
             $stmt = $pdo->prepare("
                 INSERT INTO ContactMessages (Name, Email, Message) 
                 OUTPUT INSERTED.ID
                 VALUES (?, ?, ?)
             ");
             
-            error_log("[DB] Executing insert with values: " . json_encode([
+            error_log("[DB] Executing insert with data: " . json_encode([
                 'name' => $contactData['name'],
                 'email' => $contactData['email'],
                 'message_length' => strlen($contactData['message'])
             ]));
             
-            $stmt->execute([
+            $success = $stmt->execute([
                 $contactData['name'],
                 $contactData['email'],
                 $contactData['message']
             ]);
             
+            if (!$success) {
+                error_log("[DB] Insert execution returned false");
+                return null;
+            }
+            
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
             $insertedId = $result ? (int)$result['ID'] : null;
             
-            error_log("[DB] Insert result: " . ($insertedId ? "Success, ID: {$insertedId}" : "Failed - no ID returned"));
+            if ($insertedId) {
+                error_log("[DB] SUCCESS: Inserted record with ID: {$insertedId}");
+            } else {
+                error_log("[DB] WARNING: Insert seemed to succeed but no ID was returned");
+            }
             
             return $insertedId;
 
         } catch (Exception $e) {
-            error_log("[DB] Failed to save contact message: " . $e->getMessage());
-            error_log("[DB] Error details: " . $e->getTraceAsString());
+            error_log("[DB] Insert failed with exception: " . $e->getMessage());
+            error_log("[DB] Exception type: " . get_class($e));
             
-            // Try to get more specific error information
+            // Get PDO error info if available
             if (isset($pdo)) {
                 $errorInfo = $pdo->errorInfo();
                 error_log("[DB] PDO Error Info: " . json_encode($errorInfo));
             }
             
+            if (isset($stmt)) {
+                $stmtError = $stmt->errorInfo();
+                error_log("[DB] Statement Error Info: " . json_encode($stmtError));
+            }
+            
             return null;
         }
-    }
-
-    private function getClientIP(): string {
-        $ipKeys = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP', 'REMOTE_ADDR'];
-        
-        foreach ($ipKeys as $key) {
-            if (isset($_SERVER[$key]) && !empty($_SERVER[$key])) {
-                $ip = $_SERVER[$key];
-                if (strpos($ip, ',') !== false) {
-                    $ip = trim(explode(',', $ip)[0]);
-                }
-                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
-                    return $ip;
-                }
-            }
-        }
-        
-        return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
     }
 }
 
