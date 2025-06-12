@@ -20,6 +20,7 @@ class Application
     public function setRouter(Router $router): void
     {
         $this->router = $router;
+        
     }
 
     public function addMiddleware(MiddlewareInterface $middleware): void
