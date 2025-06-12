@@ -11,13 +11,17 @@ class CorsMiddleware implements MiddlewareInterface
 
     public function __construct()
     {
+        // Get environment safely
+        $appEnv = $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production';
+        $allowedOriginsEnv = $_ENV['ALLOWED_ORIGINS'] ?? getenv('ALLOWED_ORIGINS') ?: '';
+        
         $this->allowedOrigins = array_filter(
-            explode(',', $_ENV['ALLOWED_ORIGINS'] ?? ''),
+            explode(',', $allowedOriginsEnv),
             fn($origin) => !empty(trim($origin))
         );
         
         // Add localhost origins for development
-        if ($_ENV['APP_ENV'] === 'development') {
+        if ($appEnv === 'development') {
             $this->allowedOrigins = array_merge($this->allowedOrigins, [
                 'http://localhost:3000',
                 'http://localhost:5173'
@@ -27,7 +31,7 @@ class CorsMiddleware implements MiddlewareInterface
         // Always allow your Azure Static Web App in production if ALLOWED_ORIGINS is empty
         if (empty($this->allowedOrigins)) {
             $this->allowedOrigins = [
-                'https://polite-sea-0cee84310.6.azurestaticapps.net/'
+                'https://polite-sea-0cee84310.6.azurestaticapps.net'
             ];
         }
     }
@@ -82,18 +86,22 @@ class CorsMiddleware implements MiddlewareInterface
 
     private function setCorsHeaders(string $origin): void
     {
-        header("Access-Control-Allow-Origin: {$origin}");
-        header('Access-Control-Allow-Credentials: true');
-        header('Access-Control-Allow-Methods: ' . implode(', ', $this->allowedMethods));
-        header('Access-Control-Allow-Headers: ' . implode(', ', $this->allowedHeaders));
-        header('Access-Control-Max-Age: 86400'); // 24 hours
-        header('Vary: Origin');
+        if (!headers_sent()) {
+            header("Access-Control-Allow-Origin: {$origin}");
+            header('Access-Control-Allow-Credentials: true');
+            header('Access-Control-Allow-Methods: ' . implode(', ', $this->allowedMethods));
+            header('Access-Control-Allow-Headers: ' . implode(', ', $this->allowedHeaders));
+            header('Access-Control-Max-Age: 86400'); // 24 hours
+            header('Vary: Origin');
+        }
     }
 
     private function setBasicCorsHeaders(): void
     {
-        header('Access-Control-Allow-Methods: ' . implode(', ', $this->allowedMethods));
-        header('Access-Control-Allow-Headers: ' . implode(', ', $this->allowedHeaders));
-        header('Access-Control-Max-Age: 86400');
+        if (!headers_sent()) {
+            header('Access-Control-Allow-Methods: ' . implode(', ', $this->allowedMethods));
+            header('Access-Control-Allow-Headers: ' . implode(', ', $this->allowedHeaders));
+            header('Access-Control-Max-Age: 86400');
+        }
     }
 }

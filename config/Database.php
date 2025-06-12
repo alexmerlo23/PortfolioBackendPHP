@@ -16,7 +16,7 @@ class Database
     private function __construct()
     {
         $this->config = [
-            'host' => $_ENV['DB_HOST'],
+            'host' => $_ENV['DB_SERVER'],
             'port' => $_ENV['DB_PORT'] ?? '1433',
             'database' => $_ENV['DB_DATABASE'],
             'username' => $_ENV['DB_USERNAME'],

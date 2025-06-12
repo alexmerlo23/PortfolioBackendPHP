@@ -130,13 +130,17 @@ class Application
     private function sendResponse(mixed $response): void
     {
         if (is_array($response) || is_object($response)) {
-            header('Content-Type: application/json');
+            if (!headers_sent()) {
+                header('Content-Type: application/json');
+            }
             echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         } elseif (is_string($response)) {
             echo $response;
         } else {
             // Default JSON response
-            header('Content-Type: application/json');
+            if (!headers_sent()) {
+                header('Content-Type: application/json');
+            }
             echo json_encode(['data' => $response]);
         }
     }
@@ -145,8 +149,10 @@ class Application
     {
         $statusCode = method_exists($e, 'getStatusCode') ? $e->getStatusCode() : 500;
         
-        http_response_code($statusCode);
-        header('Content-Type: application/json');
+        if (!headers_sent()) {
+            http_response_code($statusCode);
+            header('Content-Type: application/json');
+        }
 
         $response = [
             'error' => true,
@@ -154,7 +160,8 @@ class Application
             'timestamp' => date('c')
         ];
 
-        if ($_ENV['APP_ENV'] === 'development') {
+        $appEnv = $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production';
+        if ($appEnv === 'development') {
             $response['trace'] = $e->getTraceAsString();
             $response['file'] = $e->getFile();
             $response['line'] = $e->getLine();
