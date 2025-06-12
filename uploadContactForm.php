@@ -459,8 +459,8 @@ class ContactFormHandler {
             $errors[] = 'Name must be at least 2 characters long';
         }
 
-        if (!empty($input['message']) && strlen(trim($input['message'])) < 10) {
-            $errors[] = 'Message must be at least 10 characters long';
+        if (!empty($input['message']) && strlen(trim($input['message'])) < 2) {
+            $errors[] = 'Message must be at least 2 characters long';
         }
 
         if (!empty($input['name']) && strlen($input['name']) > 255) {
