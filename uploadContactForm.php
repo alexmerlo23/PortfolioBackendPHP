@@ -194,26 +194,33 @@ class DatabaseConnection {
 }
 
 // =============================================================================
-// EMAIL SERVICE - FIXED TO MATCH NODE.JS VERSION
+// EMAIL SERVICE
 // =============================================================================
 class EmailService {
+    private string $provider;
     private array $config;
 
     public function __construct() {
-        $this->config = [
-            'service_id' => $_ENV['EMAILJS_SERVICE_ID'] ?? getenv('EMAILJS_SERVICE_ID') ?? '',
-            'template_id' => $_ENV['EMAILJS_TEMPLATE_ID'] ?? getenv('EMAILJS_TEMPLATE_ID') ?? '',
-            'public_key' => $_ENV['EMAILJS_PUBLIC_KEY'] ?? getenv('EMAILJS_PUBLIC_KEY') ?? '',
-            'private_key' => $_ENV['EMAILJS_PRIVATE_KEY'] ?? getenv('EMAILJS_PRIVATE_KEY') ?? ''
-        ];
+        $this->provider = $_ENV['EMAIL_PROVIDER'] ?? getenv('EMAIL_PROVIDER') ?? 'emailjs';
+        $this->config = $this->getConfig();
     }
 
     public function sendContactEmail(array $contactData): bool {
+        switch ($this->provider) {
+            case 'emailjs':
+                return $this->sendViaEmailJS($contactData);
+            case 'smtp':
+                return $this->sendViaSMTP($contactData);
+            default:
+                throw new Exception("Unsupported email provider: {$this->provider}");
+        }
+    }
+
+    private function sendViaEmailJS(array $contactData): bool {
         $url = 'https://api.emailjs.com/api/v1.0/email/send';
         
-        // FIXED: Use the exact same template parameters as Node.js version
         $payload = [
-            'service_id' => $this->config['service_id'],
+           'service_id' => $this->config['service_id'],
             'template_id' => $this->config['template_id'],
             'user_id' => $this->config['public_key'],
             'accessToken' => $this->config['private_key'],
@@ -228,8 +235,6 @@ class EmailService {
             ]
         ];
 
-        error_log("[EMAIL] Sending email with template params: " . json_encode($payload['template_params']));
-
         $ch = curl_init();
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
@@ -237,13 +242,11 @@ class EmailService {
             CURLOPT_POSTFIELDS => json_encode($payload),
             CURLOPT_HTTPHEADER => [
                 'Content-Type: application/json',
-                'User-Agent: Portfolio-Backend-PHP/1.0'
+                'User-Agent: Portfolio-Backend/1.0'
             ],
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2
+            CURLOPT_CONNECTTIMEOUT => 10
         ]);
 
         $response = curl_exec($ch);
@@ -258,7 +261,6 @@ class EmailService {
 
         if ($httpCode === 200) {
             error_log("[EMAIL] Successfully sent email via EmailJS for: {$contactData['email']}");
-            error_log("[EMAIL] EmailJS response: {$response}");
             return true;
         }
 
@@ -266,22 +268,91 @@ class EmailService {
         return false;
     }
 
+    private function sendViaSMTP(array $contactData): bool {
+        $to = $this->config['to_email'];
+        $subject = "Portfolio Contact: " . ($contactData['subject'] ?? 'New Message');
+        
+        $message = "New contact form submission:\n\n";
+        $message .= "Name: " . $contactData['name'] . "\n";
+        $message .= "Email: " . $contactData['email'] . "\n";
+        $message .= "Subject: " . ($contactData['subject'] ?? 'N/A') . "\n\n";
+        $message .= "Message:\n" . $contactData['message'] . "\n\n";
+        $message .= "---\n";
+        $message .= "Sent from Portfolio Contact Form\n";
+        $message .= "IP: " . ($contactData['ip_address'] ?? 'Unknown') . "\n";
+        $message .= "Time: " . date('c') . "\n";
+
+        $headers = [
+            "From: " . $this->config['from_email'],
+            "Reply-To: " . $contactData['email'],
+            "X-Mailer: Portfolio-Backend-PHP/1.0",
+            "Content-Type: text/plain; charset=UTF-8"
+        ];
+
+        $success = mail($to, $subject, $message, implode("\r\n", $headers));
+        
+        if ($success) {
+            error_log("[EMAIL] Successfully sent email via SMTP for: {$contactData['email']}");
+        } else {
+            error_log("[EMAIL] SMTP mail() function failed for: {$contactData['email']}");
+        }
+
+        return $success;
+    }
+
+    private function getConfig(): array {
+        switch ($this->provider) {
+            case 'emailjs':
+                return [
+                    'service_id' => $_ENV['EMAILJS_SERVICE_ID'] ?? getenv('EMAILJS_SERVICE_ID') ?? '',
+                    'template_id' => $_ENV['EMAILJS_TEMPLATE_ID'] ?? getenv('EMAILJS_TEMPLATE_ID') ?? '',
+                    'public_key' => $_ENV['EMAILJS_PUBLIC_KEY'] ?? getenv('EMAILJS_PUBLIC_KEY') ?? '',
+                    'private_key' => $_ENV['EMAILJS_PRIVATE_KEY'] ?? getenv('EMAILJS_PRIVATE_KEY') ?? ''
+                ];
+            
+            case 'smtp':
+                return [
+                    'host' => $_ENV['SMTP_HOST'] ?? getenv('SMTP_HOST') ?? '',
+                    'port' => $_ENV['SMTP_PORT'] ?? getenv('SMTP_PORT') ?? '587',
+                    'username' => $_ENV['SMTP_USERNAME'] ?? getenv('SMTP_USERNAME') ?? '',
+                    'password' => $_ENV['SMTP_PASSWORD'] ?? getenv('SMTP_PASSWORD') ?? '',
+                    'from_email' => $_ENV['SMTP_FROM_EMAIL'] ?? getenv('SMTP_FROM_EMAIL') ?? '',
+                    'to_email' => $_ENV['SMTP_TO_EMAIL'] ?? getenv('SMTP_TO_EMAIL') ?? ''
+                ];
+            
+            default:
+                return [];
+        }
+    }
+
     public function isConfigured(): bool {
-        $requiredKeys = ['service_id', 'template_id', 'public_key', 'private_key'];
+        $requiredKeys = $this->getRequiredConfigKeys();
         
         foreach ($requiredKeys as $key) {
             if (empty($this->config[$key])) {
-                error_log("[EMAIL] Missing configuration key: {$key}");
                 return false;
             }
         }
         
         return true;
     }
+
+    private function getRequiredConfigKeys(): array {
+        switch ($this->provider) {
+            case 'emailjs':
+                return ['service_id', 'template_id', 'public_key', 'private_key'];
+            
+            case 'smtp':
+                return ['host', 'port', 'username', 'password', 'from_email', 'to_email'];
+            
+            default:
+                return [];
+        }
+    }
 }
 
 // =============================================================================
-// CONTACT FORM HANDLER - FIXED TO MATCH NODE.JS VERSION
+// CONTACT FORM HANDLER
 // =============================================================================
 class ContactFormHandler {
     private DatabaseConnection $db;
@@ -302,12 +373,6 @@ class ContactFormHandler {
                 $input = $_POST;
             }
             
-            error_log("[CONTACT] 🚀 Contact form submission started - " . json_encode([
-                'hasName' => !empty($input['name']),
-                'hasEmail' => !empty($input['email']),
-                'messageLength' => isset($input['message']) ? strlen($input['message']) : 0
-            ]));
-            
             // Validate required fields
             $validationErrors = $this->validateInput($input);
             if (!empty($validationErrors)) {
@@ -319,88 +384,46 @@ class ContactFormHandler {
                 ];
             }
 
-            // Prepare contact data - FIXED: Only store name, email, message like Node.js
+            // Prepare contact data
             $contactData = [
                 'name' => trim($input['name']),
                 'email' => trim($input['email']),
-                'message' => trim($input['message'])
+                'subject' => trim($input['subject'] ?? 'Contact Form Message'),
+                'message' => trim($input['message']),
+                'ip_address' => $this->getClientIP(),
+                'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+                'created_at' => date('Y-m-d H:i:s')
             ];
 
-            error_log("[EMAIL] EmailJS Configuration Status: " . json_encode([
-                'fullyConfigured' => $this->emailService->isConfigured(),
-                'hasServiceId' => !empty($_ENV['EMAILJS_SERVICE_ID'] ?? getenv('EMAILJS_SERVICE_ID')),
-                'hasTemplateId' => !empty($_ENV['EMAILJS_TEMPLATE_ID'] ?? getenv('EMAILJS_TEMPLATE_ID')),
-                'initialized' => $this->emailService->isConfigured()
-            ]));
-
-            // Execute database insert and EmailJS simultaneously like Node.js
-            $dbPromise = null;
-            $emailPromise = null;
-            
-            // Database operation
+            // Save to database if configured
+            $contactId = null;
             if ($this->db->isConfigured()) {
-                try {
-                    $dbPromise = $this->saveToDatabase($contactData);
-                } catch (Exception $e) {
-                    error_log("[DB] Database operation failed: " . $e->getMessage());
-                    $dbPromise = null;
-                }
+                $contactId = $this->saveToDatabase($contactData);
             }
 
-            // Email operation
+            // Send email if configured
+            $emailSent = false;
             if ($this->emailService->isConfigured()) {
-                try {
-                    error_log("[INFO] Attempting to send email via EmailJS (server-side)");
-                    $emailPromise = $this->emailService->sendContactEmail($contactData);
-                } catch (Exception $e) {
-                    error_log("[EMAIL] EmailJS send failed: " . $e->getMessage());
-                    $emailPromise = false;
-                }
-            } else {
-                error_log("[INFO] Email sending skipped - configuration incomplete");
-                $emailPromise = false;
+                $emailSent = $this->emailService->sendContactEmail($contactData);
             }
 
-            // Check results
-            $dbSuccess = $dbPromise !== null;
-            $emailSuccess = $emailPromise === true;
+            // Log the submission
+            error_log(sprintf(
+                "[CONTACT] New message from %s (%s) - DB ID: %s, Email sent: %s",
+                $contactData['name'],
+                $contactData['email'],
+                $contactId ? $contactId : 'N/A',
+                $emailSent ? 'Yes' : 'No'
+            ));
 
-            error_log("[INFO] Operation Results: " . json_encode([
-                'databaseSuccess' => $dbSuccess,
-                'emailSuccess' => $emailSuccess,
-                'emailSkipped' => !$this->emailService->isConfigured()
-            ]));
-
-            if ($dbSuccess) {
-                error_log("[INFO] Contact message saved to database - ID: {$dbPromise}");
-            }
-
-            if ($emailSuccess) {
-                error_log("[INFO] Email sent successfully via EmailJS");
-            }
-
-            // Return success response if database worked (matching Node.js logic)
-            if ($dbSuccess) {
-                http_response_code(201);
-                return [
-                    'success' => true,
-                    'message' => 'Contact message sent successfully',
-                    'id' => $dbPromise,
-                    'timestamp' => date('c'),
-                    'emailSent' => $emailSuccess,
-                    'emailConfigured' => $this->emailService->isConfigured(),
-                    // Debug info - remove in production
-                    'debug' => [
-                        'emailJSInitialized' => $this->emailService->isConfigured(),
-                        'emailResult' => [
-                            'status' => $emailSuccess ? 'fulfilled' : ($this->emailService->isConfigured() ? 'rejected' : 'skipped'),
-                            'wasSkipped' => !$this->emailService->isConfigured()
-                        ]
-                    ]
-                ];
-            } else {
-                throw new Exception('Database operation failed');
-            }
+            http_response_code(201);
+            return [
+                'success' => true,
+                'message' => 'Contact message received successfully',
+                'id' => $contactId,
+                'email_sent' => $emailSent,
+                'timestamp' => $contactData['created_at']
+            ];
 
         } catch (Exception $e) {
             error_log("[CONTACT] Error: " . $e->getMessage());
@@ -437,8 +460,8 @@ class ContactFormHandler {
             $errors[] = 'Name must be at least 2 characters long';
         }
 
-        if (!empty($input['message']) && strlen(trim($input['message'])) < 10) {
-            $errors[] = 'Message must be at least 10 characters long';
+        if (!empty($input['message']) && strlen(trim($input['message'])) < 2) {
+            $errors[] = 'Message must be at least 2 characters long';
         }
 
         if (!empty($input['name']) && strlen($input['name']) > 255) {
@@ -447,6 +470,10 @@ class ContactFormHandler {
 
         if (!empty($input['email']) && strlen($input['email']) > 255) {
             $errors[] = 'Email must be less than 255 characters';
+        }
+
+        if (!empty($input['subject']) && strlen($input['subject']) > 500) {
+            $errors[] = 'Subject must be less than 500 characters';
         }
 
         if (!empty($input['message']) && strlen($input['message']) > 5000) {
@@ -460,17 +487,20 @@ class ContactFormHandler {
         try {
             $pdo = $this->db->getConnection();
             
-            // FIXED: Match Node.js database structure exactly - only Name, Email, Message
             $stmt = $pdo->prepare("
-                INSERT INTO ContactMessages (Name, Email, Message) 
+                INSERT INTO ContactMessages (Name, Email, Subject, Message, IpAddress, UserAgent, CreatedAt) 
                 OUTPUT INSERTED.ID
-                VALUES (?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             ");
             
             $stmt->execute([
                 $contactData['name'],
                 $contactData['email'],
-                $contactData['message']
+                $contactData['subject'],
+                $contactData['message'],
+                $contactData['ip_address'],
+                $contactData['user_agent'],
+                $contactData['created_at']
             ]);
             
             $result = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -478,7 +508,7 @@ class ContactFormHandler {
 
         } catch (Exception $e) {
             error_log("[DB] Failed to save contact message: " . $e->getMessage());
-            throw $e;
+            return null;
         }
     }
 
@@ -490,14 +520,16 @@ class ContactFormHandler {
         try {
             $pdo = $this->db->getConnection();
             
-            // FIXED: Match the Node.js table structure exactly
             $sql = "
             IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ContactMessages' AND xtype='U')
             CREATE TABLE ContactMessages (
                 ID int IDENTITY(1,1) PRIMARY KEY,
-                Name nvarchar(100) NOT NULL,
+                Name nvarchar(255) NOT NULL,
                 Email nvarchar(255) NOT NULL,
-                Message nvarchar(max) NOT NULL,
+                Subject nvarchar(500) NULL,
+                Message ntext NOT NULL,
+                IpAddress nvarchar(45) NULL,
+                UserAgent nvarchar(500) NULL,
                 CreatedAt datetime2 NOT NULL DEFAULT GETDATE(),
                 INDEX idx_created_at (CreatedAt),
                 INDEX idx_email (Email)
@@ -508,6 +540,24 @@ class ContactFormHandler {
         } catch (Exception $e) {
             error_log("[DB] Failed to create ContactMessages table: " . $e->getMessage());
         }
+    }
+
+    private function getClientIP(): string {
+        $ipKeys = ['HTTP_X_FORWARDED_FOR', 'HTTP_X_REAL_IP', 'HTTP_CLIENT_IP', 'REMOTE_ADDR'];
+        
+        foreach ($ipKeys as $key) {
+            if (isset($_SERVER[$key]) && !empty($_SERVER[$key])) {
+                $ip = $_SERVER[$key];
+                if (strpos($ip, ',') !== false) {
+                    $ip = trim(explode(',', $ip)[0]);
+                }
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return $ip;
+                }
+            }
+        }
+        
+        return $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
     }
 }
 
@@ -590,7 +640,6 @@ try {
             'trace' => $e->getTraceAsString()
         ];
     }
-    
     
     echo json_encode($response, JSON_PRETTY_PRINT);
     
