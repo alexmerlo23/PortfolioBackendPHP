@@ -159,89 +159,101 @@ class DatabaseConnection {
     }
 
     private function connect(): void {
-        try {
-            // Multiple DSN formats to try for Azure SQL
-            $dsnOptions = [
-                // Option 1: Full Azure SQL format
-                sprintf(
-                    'sqlsrv:server=%s,%s;Database=%s;LoginTimeout=30;Encrypt=1;TrustServerCertificate=0',
-                    $this->config['host'],
-                    $this->config['port'],
-                    $this->config['database']
-                ),
-                // Option 2: Alternative format
-                sprintf(
-                    'sqlsrv:Server=%s;Database=%s;LoginTimeout=30;Encrypt=true;TrustServerCertificate=false',
-                    $this->config['host'],
-                    $this->config['database']
-                ),
-                // Option 3: Simplified format
-                sprintf(
-                    'sqlsrv:server=%s;Database=%s;Encrypt=yes',
-                    $this->config['host'],
-                    $this->config['database']
-                )
-            ];
+    try {
+        // Multiple DSN formats to try for Azure SQL with LONGER TIMEOUTS
+        $dsnOptions = [
+            // Option 1: Full Azure SQL format with longer timeout
+            sprintf(
+                'sqlsrv:server=%s,%s;Database=%s;LoginTimeout=60;Encrypt=1;TrustServerCertificate=0;ConnectionPooling=0',
+                $this->config['host'],
+                $this->config['port'],
+                $this->config['database']
+            ),
+            // Option 2: Alternative format with longer timeout
+            sprintf(
+                'sqlsrv:Server=%s;Database=%s;LoginTimeout=60;Encrypt=true;TrustServerCertificate=false;ConnectionPooling=0',
+                $this->config['host'],
+                $this->config['database']
+            ),
+            // Option 3: Simplified format with longer timeout
+            sprintf(
+                'sqlsrv:server=%s;Database=%s;Encrypt=yes;LoginTimeout=60',
+                $this->config['host'],
+                $this->config['database']
+            ),
+            // Option 4: Try without encryption (temporary test)
+            sprintf(
+                'sqlsrv:server=%s,%s;Database=%s;LoginTimeout=60;Encrypt=0',
+                $this->config['host'],
+                $this->config['port'],
+                $this->config['database']
+            )
+        ];
 
-            $options = [
-                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                PDO::ATTR_EMULATE_PREPARES => false,
-                PDO::ATTR_TIMEOUT => 30,
-                PDO::SQLSRV_ATTR_ENCODING => PDO::SQLSRV_ENCODING_UTF8,
-            ];
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+            PDO::ATTR_TIMEOUT => 60, // Increased from 30
+            PDO::SQLSRV_ATTR_ENCODING => PDO::SQLSRV_ENCODING_UTF8,
+        ];
 
-            $lastException = null;
-            $connected = false;
+        $lastException = null;
+        $connected = false;
 
-            // Try each DSN format
-            foreach ($dsnOptions as $index => $dsn) {
-                try {
-                    error_log("[DB] Attempting connection #{$index} with DSN: {$dsn}");
-                    
-                    $this->connection = new PDO(
-                        $dsn,
-                        $this->config['username'],
-                        $this->config['password'],
-                        $options
-                    );
-                    
-                    // Test the connection
-                    $this->connection->query("SELECT 1");
-                    
-                    error_log("[DB] Successfully connected to Azure SQL Database with DSN #{$index}");
-                    $connected = true;
-                    break;
-                    
-                } catch (PDOException $e) {
-                    error_log("[DB] Connection attempt #{$index} failed: " . $e->getMessage());
-                    $lastException = $e;
-                    $this->connection = null;
-                    continue;
+        // Try each DSN format
+        foreach ($dsnOptions as $index => $dsn) {
+            try {
+                error_log("[DB] Attempting connection #{$index} with DSN: {$dsn}");
+                
+                $this->connection = new PDO(
+                    $dsn,
+                    $this->config['username'],
+                    $this->config['password'],
+                    $options
+                );
+                
+                // Test the connection with a simple query
+                $this->connection->query("SELECT 1");
+                
+                error_log("[DB] Successfully connected to Azure SQL Database with DSN #{$index}");
+                $connected = true;
+                break;
+                
+            } catch (PDOException $e) {
+                error_log("[DB] Connection attempt #{$index} failed: " . $e->getMessage());
+                $lastException = $e;
+                $this->connection = null;
+                
+                // Add a small delay between attempts
+                if ($index < count($dsnOptions) - 1) {
+                    sleep(2);
                 }
+                continue;
             }
-
-            if (!$connected) {
-                throw $lastException ?? new Exception('All connection attempts failed');
-            }
-
-        } catch (PDOException $e) {
-            error_log("[DB] Final connection failure: " . $e->getMessage());
-            error_log("[DB] Error code: " . $e->getCode());
-            
-            // Provide more specific error guidance
-            $errorMessage = $e->getMessage();
-            if (strpos($errorMessage, 'Login timeout') !== false) {
-                error_log("[DB] LOGIN TIMEOUT - Check firewall rules and network connectivity");
-            } elseif (strpos($errorMessage, 'Login failed') !== false) {
-                error_log("[DB] LOGIN FAILED - Check username/password");
-            } elseif (strpos($errorMessage, 'Cannot open database') !== false) {
-                error_log("[DB] DATABASE ACCESS - Check database name and permissions");
-            }
-            
-            throw new Exception('Database connection failed: ' . $e->getMessage());
         }
+
+        if (!$connected) {
+            throw $lastException ?? new Exception('All connection attempts failed');
+        }
+
+    } catch (PDOException $e) {
+        error_log("[DB] Final connection failure: " . $e->getMessage());
+        error_log("[DB] Error code: " . $e->getCode());
+        
+        // Provide more specific error guidance
+        $errorMessage = $e->getMessage();
+        if (strpos($errorMessage, 'Login timeout') !== false) {
+            error_log("[DB] LOGIN TIMEOUT - Check firewall rules and network connectivity");
+        } elseif (strpos($errorMessage, 'Login failed') !== false) {
+            error_log("[DB] LOGIN FAILED - Check username/password");
+        } elseif (strpos($errorMessage, 'Cannot open database') !== false) {
+            error_log("[DB] DATABASE ACCESS - Check database name and permissions");
+        }
+        
+        throw new Exception('Database connection failed: ' . $e->getMessage());
     }
+}
 
     public function isConfigured(): bool {
         $configured = !empty($this->config['host']) && 
