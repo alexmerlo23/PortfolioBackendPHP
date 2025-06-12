@@ -25,6 +25,22 @@ try {
     // Load routes - make $router available in the included file
     require_once __DIR__ . '/../src/routes/Contact.php';
     
+    // Add a root route to handle the base path
+    $router->get('/', function() {
+        return [
+            'success' => true,
+            'message' => 'Portfolio API Server',
+            'version' => '1.0.0',
+            'timestamp' => date('c'),
+            'endpoints' => [
+                'GET /' => 'API Status',
+                'GET /api/test' => 'Test endpoint',
+                'POST /api/contact' => 'Contact form submission',
+                'OPTIONS /api/contact' => 'CORS preflight'
+            ]
+        ];
+    });
+    
     // Create application
     $app = new Application();
     $app->setRouter($router);
@@ -37,11 +53,23 @@ try {
     http_response_code(500);
     header('Content-Type: application/json');
     
-    echo json_encode([
+    $response = [
         'error' => true,
         'message' => 'Server error: ' . $e->getMessage(),
         'timestamp' => date('c')
-    ]);
+    ];
     
-    error_log('[BOOTSTRAP ERROR] ' . $e->getMessage());
+    // Add debug info if in development
+    $appEnv = $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production';
+    if ($appEnv !== 'production') {
+        $response['debug'] = [
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ];
+    }
+    
+    echo json_encode($response, JSON_PRETTY_PRINT);
+    
+    error_log('[BOOTSTRAP ERROR] ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
 }

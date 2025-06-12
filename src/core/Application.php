@@ -50,15 +50,37 @@ class Application
 
     private function parseRequest(): void
     {
+        $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
+        $parsedUrl = parse_url($requestUri);
+        $path = $parsedUrl['path'] ?? '/';
+        
+        // Log the original request for debugging
+        error_log(sprintf(
+            '[%s] [REQUEST] Original URI: %s, Parsed path: %s',
+            date('c'),
+            $requestUri,
+            $path
+        ));
+        
         $this->request = [
             'method' => $_SERVER['REQUEST_METHOD'] ?? 'GET',
-            'path' => parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH),
+            'path' => $path,
             'query' => $_GET,
             'body' => $this->getRequestBody(),
             'headers' => $this->getHeaders(),
             'ip' => $this->getClientIP(),
             'user_agent' => $_SERVER['HTTP_USER_AGENT'] ?? '',
+            'raw_uri' => $requestUri,
         ];
+        
+        // Debug log the parsed request
+        if (($_ENV['APP_ENV'] ?? 'production') !== 'production') {
+            error_log('[REQUEST] Parsed request: ' . json_encode([
+                'method' => $this->request['method'],
+                'path' => $this->request['path'],
+                'headers' => array_keys($this->request['headers'])
+            ]));
+        }
     }
 
     private function getRequestBody(): array
@@ -129,19 +151,17 @@ class Application
 
     private function sendResponse(mixed $response): void
     {
+        if (!headers_sent()) {
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        
         if (is_array($response) || is_object($response)) {
-            if (!headers_sent()) {
-                header('Content-Type: application/json');
-            }
-            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+            echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         } elseif (is_string($response)) {
             echo $response;
         } else {
             // Default JSON response
-            if (!headers_sent()) {
-                header('Content-Type: application/json');
-            }
-            echo json_encode(['data' => $response]);
+            echo json_encode(['data' => $response], JSON_PRETTY_PRINT);
         }
     }
 
@@ -151,7 +171,7 @@ class Application
         
         if (!headers_sent()) {
             http_response_code($statusCode);
-            header('Content-Type: application/json');
+            header('Content-Type: application/json; charset=utf-8');
         }
 
         $response = [
@@ -161,21 +181,30 @@ class Application
         ];
 
         $appEnv = $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production';
-        if ($appEnv === 'development') {
-            $response['trace'] = $e->getTraceAsString();
-            $response['file'] = $e->getFile();
-            $response['line'] = $e->getLine();
+        if ($appEnv !== 'production') {
+            $response['debug'] = [
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'request_info' => [
+                    'method' => $this->request['method'] ?? 'UNKNOWN',
+                    'path' => $this->request['path'] ?? 'UNKNOWN',
+                    'raw_uri' => $this->request['raw_uri'] ?? 'UNKNOWN'
+                ]
+            ];
         }
 
         echo json_encode($response, JSON_PRETTY_PRINT);
 
         // Log error
         error_log(sprintf(
-            '[%s] [ERROR] %s in %s:%d',
+            '[%s] [ERROR] %s in %s:%d - Request: %s %s',
             date('c'),
             $e->getMessage(),
             $e->getFile(),
-            $e->getLine()
+            $e->getLine(),
+            $this->request['method'] ?? 'UNKNOWN',
+            $this->request['path'] ?? 'UNKNOWN'
         ));
     }
 

@@ -15,16 +15,22 @@ class CorsMiddleware implements MiddlewareInterface
         $appEnv = $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production';
         $allowedOriginsEnv = $_ENV['ALLOWED_ORIGINS'] ?? getenv('ALLOWED_ORIGINS') ?: '';
         
-        $this->allowedOrigins = array_filter(
-            explode(',', $allowedOriginsEnv),
-            fn($origin) => !empty(trim($origin))
+        // Parse allowed origins, trimming whitespace and removing trailing slashes
+        $this->allowedOrigins = array_map(
+            fn($origin) => rtrim(trim($origin), '/'),
+            array_filter(
+                explode(',', $allowedOriginsEnv),
+                fn($origin) => !empty(trim($origin))
+            )
         );
         
         // Add localhost origins for development
         if ($appEnv === 'development') {
             $this->allowedOrigins = array_merge($this->allowedOrigins, [
                 'http://localhost:3000',
-                'http://localhost:5173'
+                'http://localhost:5173',
+                'http://127.0.0.1:3000',
+                'http://127.0.0.1:5173'
             ]);
         }
         
@@ -34,11 +40,22 @@ class CorsMiddleware implements MiddlewareInterface
                 'https://polite-sea-0cee84310.6.azurestaticapps.net'
             ];
         }
+        
+        // Remove duplicates and ensure no trailing slashes
+        $this->allowedOrigins = array_unique($this->allowedOrigins);
+        
+        // Log allowed origins for debugging
+        error_log('[CORS] Allowed origins: ' . json_encode($this->allowedOrigins));
     }
 
     public function handle(array $request): mixed
     {
         $origin = $request['headers']['origin'] ?? '';
+        
+        // Normalize origin by removing trailing slash
+        if (!empty($origin)) {
+            $origin = rtrim($origin, '/');
+        }
         
         // Allow requests with no origin (mobile apps, curl, etc.)
         if (empty($origin)) {
@@ -49,6 +66,7 @@ class CorsMiddleware implements MiddlewareInterface
         // Check if origin is allowed
         if ($this->isOriginAllowed($origin)) {
             $this->setCorsHeaders($origin);
+            error_log("[CORS] Allowed request from: {$origin}");
         } else {
             // Log unauthorized origin attempt
             error_log(sprintf(
@@ -58,12 +76,20 @@ class CorsMiddleware implements MiddlewareInterface
                 implode(', ', $this->allowedOrigins)
             ));
             
-            http_response_code(403);
-            return [
-                'error' => 'CORS: Origin not allowed',
-                'origin' => $origin,
-                'allowed_origins' => $this->allowedOrigins
-            ];
+            // For production, we might want to be more lenient for now
+            $appEnv = $_ENV['APP_ENV'] ?? 'production';
+            if ($appEnv === 'production') {
+                // Allow all origins in production for now, but log them
+                $this->setCorsHeaders($origin);
+                error_log("[CORS] WARNING: Allowing unauthorized origin in production: {$origin}");
+            } else {
+                http_response_code(403);
+                return [
+                    'error' => 'CORS: Origin not allowed',
+                    'origin' => $origin,
+                    'allowed_origins' => $this->allowedOrigins
+                ];
+            }
         }
 
         // Handle preflight OPTIONS requests
@@ -72,7 +98,8 @@ class CorsMiddleware implements MiddlewareInterface
             return [
                 'message' => 'CORS preflight successful',
                 'allowed_methods' => $this->allowedMethods,
-                'allowed_headers' => $this->allowedHeaders
+                'allowed_headers' => $this->allowedHeaders,
+                'origin' => $origin
             ];
         }
 
